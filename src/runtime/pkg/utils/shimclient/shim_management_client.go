@@ -8,13 +8,13 @@ package shimclient
 import (
 	"bytes"
 	"fmt"
+	cdshim "github.com/containerd/containerd/runtime/v2/shim"
+	shim "github.com/kata-containers/kata-containers/src/runtime/pkg/containerd-shim-v2"
 	"io"
 	"net"
 	"net/http"
+	//"strconv"
 	"time"
-
-	cdshim "github.com/containerd/containerd/runtime/v2/shim"
-	shim "github.com/kata-containers/kata-containers/src/runtime/pkg/containerd-shim-v2"
 )
 
 // BuildShimClient builds and returns an http client for communicating with the provided sandbox

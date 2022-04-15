@@ -1259,6 +1259,9 @@ func (k *kataAgent) createContainer(ctx context.Context, sandbox *Sandbox, c *Co
 		SandboxPidns: sharedPidNs,
 	}
 
+	k.Logger().Infof("Container Id: %v Storages: %+v", c.id, ctrStorages)
+	k.Logger().Infof("Container Id: %v Devices: %+v", c.id, ctrDevices)
+
 	if _, err = k.sendReq(ctx, req); err != nil {
 		return nil, err
 	}
@@ -1545,7 +1548,7 @@ func (k *kataAgent) handleBlkOCIMounts(c *Container, spec *specs.Spec) ([]*grpc.
 		if vol == nil || err != nil {
 			return nil, err
 		}
-
+		k.Logger().Infof("kataAgent createBlkStorageObject mnt: %+v vol: %+v", m, vol)
 		// Each device will be mounted at a unique location within the VM only once. Mounting
 		// to the container specific location is handled within the OCI spec. Let's ensure that
 		// the storage mount point is unique for each device. This is then utilized as the source
@@ -1564,7 +1567,7 @@ func (k *kataAgent) handleBlkOCIMounts(c *Container, spec *specs.Spec) ([]*grpc.
 			k.Logger().WithFields(logrus.Fields{
 				"original-source": ociMount.Source,
 				"new-source":      path,
-			}).Debug("Replacing OCI mount source")
+			}).Info("Replacing OCI mount source")
 			spec.Mounts[idx].Source = path
 			break
 		}
@@ -2183,6 +2186,7 @@ func (k *kataAgent) getAgentMetrics(ctx context.Context, req *grpc.GetMetricsReq
 }
 
 func (k *kataAgent) getGuestVolumeStats(ctx context.Context, volumeGuestPath string) ([]byte, error) {
+	k.Logger().Infof("getGuestVolumeStats: %s", volumeGuestPath)
 	result, err := k.sendReq(ctx, &grpc.VolumeStatsRequest{VolumeGuestPath: volumeGuestPath})
 	if err != nil {
 		return nil, err

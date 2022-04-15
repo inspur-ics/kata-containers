@@ -8,14 +8,13 @@ package config
 
 import (
 	"fmt"
+	"github.com/go-ini/ini"
+	vcTypes "github.com/kata-containers/kata-containers/src/runtime/virtcontainers/types"
+	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
-
-	"github.com/go-ini/ini"
-	vcTypes "github.com/kata-containers/kata-containers/src/runtime/virtcontainers/types"
-	"golang.org/x/sys/unix"
 )
 
 // DeviceType indicates device type
@@ -333,7 +332,8 @@ func GetHostPath(devInfo DeviceInfo, vhostUserStoreEnabled bool, vhostUserStoreP
 		// supported for these devices.
 
 		if os.IsNotExist(err) {
-			return devInfo.ContainerPath, nil
+			//return devInfo.ContainerPath, nil
+			return devInfo.HostPath, nil
 		}
 
 		return "", err

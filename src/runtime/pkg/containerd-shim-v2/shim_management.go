@@ -14,7 +14,7 @@ import (
 	"io/ioutil"
 	"net/http"
 	"net/http/pprof"
-	"net/url"
+	//"net/url"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -22,6 +22,7 @@ import (
 	"google.golang.org/grpc/codes"
 
 	cdshim "github.com/containerd/containerd/runtime/v2/shim"
+	volume "github.com/kata-containers/kata-containers/src/runtime/pkg/direct-volume"
 	mutils "github.com/kata-containers/kata-containers/src/runtime/pkg/utils"
 	vc "github.com/kata-containers/kata-containers/src/runtime/virtcontainers"
 	vcAnnotations "github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/annotations"
@@ -139,17 +140,21 @@ func decodeAgentMetrics(body string) []*dto.MetricFamily {
 }
 
 func (s *service) serveVolumeStats(w http.ResponseWriter, r *http.Request) {
-	volumePath, err := url.PathUnescape(strings.TrimPrefix(r.URL.Path, DirectVolumeStatUrl))
+	volumePath := r.URL.Query().Get("VolumePath")
+	shimMgtLog.Infof("serveVolumeStats: volumePath: %s", volumePath)
+	mntInfo, err := volume.VolumeMountInfo(volumePath)
 	if err != nil {
-		shimMgtLog.WithError(err).Error("failed to unescape the volume stat url path")
+		shimMgtLog.WithError(err).WithField("volume-path", volumePath).Errorf("failed to get volume mount info. Err: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(err.Error()))
 		return
 	}
 
-	buf, err := s.sandbox.GuestVolumeStats(context.Background(), volumePath)
+	devPath := mntInfo.Device
+	shimMgtLog.Infof("serveVolumeStats: devPath: %s", devPath)
+	buf, err := s.sandbox.GuestVolumeStats(context.Background(), devPath)
 	if err != nil {
-		shimMgtLog.WithError(err).WithField("volume-path", volumePath).Error("failed to get volume stats")
+		shimMgtLog.WithError(err).WithField("volume-path", volumePath).Errorf("failed to get volume stats. Err: %v", err)
 		w.WriteHeader(http.StatusInternalServerError)
 		w.Write([]byte(err.Error()))
 		return
@@ -158,6 +163,8 @@ func (s *service) serveVolumeStats(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *service) serveVolumeResize(w http.ResponseWriter, r *http.Request) {
+	shimMgtLog.Infof("ResizeRequest: %+v", r)
+
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		shimMgtLog.WithError(err).Error("failed to read request body")
@@ -165,6 +172,8 @@ func (s *service) serveVolumeResize(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(err.Error()))
 		return
 	}
+	shimMgtLog.Infof("ResizeRequest: body: %+v", body)
+
 	var resizeReq ResizeRequest
 	err = json.Unmarshal(body, &resizeReq)
 	if err != nil {
@@ -173,7 +182,7 @@ func (s *service) serveVolumeResize(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(err.Error()))
 		return
 	}
-
+	shimMgtLog.Infof("resizeReq: %+v", resizeReq)
 	err = s.sandbox.ResizeGuestVolume(context.Background(), resizeReq.VolumePath, resizeReq.Size)
 	if err != nil {
 		shimMgtLog.WithError(err).WithField("volume-path", resizeReq.VolumePath).Error("failed to resize the volume")

@@ -35,8 +35,19 @@ type MountInfo struct {
 	Options []string `json:"options,omitempty"`
 }
 
+func ConvertVolumePath(volumePath string) string {
+	if strings.HasPrefix(volumePath, "/var/lib/kubelet/") {
+		volumePath = strings.Replace(volumePath, "/var/lib/kubelet/", "", 1)
+	} else if strings.HasPrefix(volumePath, "/") {
+		volumePath = strings.Replace(volumePath, "/", "", 1)
+	}
+	volumePath = strings.Replace(volumePath, "/", "_", -1)
+	return volumePath
+}
+
 // Add writes the mount info of a direct volume into a filesystem path known to Kata Container.
 func Add(volumePath string, mountInfo string) error {
+	volumePath = ConvertVolumePath(volumePath)
 	volumeDir := filepath.Join(kataDirectVolumeRootPath, volumePath)
 	stat, err := os.Stat(volumeDir)
 	if err != nil && !errors.Is(err, os.ErrNotExist) {
@@ -60,6 +71,7 @@ func Add(volumePath string, mountInfo string) error {
 
 // Remove deletes the direct volume path including all the files inside it.
 func Remove(volumePath string) error {
+	volumePath = ConvertVolumePath(volumePath)
 	// Find the base of the volume path to delete the whole volume path
 	base := strings.SplitN(volumePath, string(os.PathSeparator), 2)[0]
 	return os.RemoveAll(filepath.Join(kataDirectVolumeRootPath, base))

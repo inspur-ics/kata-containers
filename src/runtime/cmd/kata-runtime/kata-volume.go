@@ -7,11 +7,11 @@ package main
 
 import (
 	"encoding/json"
-	"net/url"
-
+	"fmt"
 	containerdshim "github.com/kata-containers/kata-containers/src/runtime/pkg/containerd-shim-v2"
 	"github.com/kata-containers/kata-containers/src/runtime/pkg/direct-volume"
 	"github.com/kata-containers/kata-containers/src/runtime/pkg/utils/shimclient"
+	"net/url"
 
 	"github.com/urfave/cli"
 )
@@ -83,13 +83,13 @@ var statsCommand = cli.Command{
 			Destination: &volumePath,
 		},
 	},
-	Action: func(c *cli.Context) (string, error) {
+	Action: func(c *cli.Context) error {
 		stats, err := Stats(volumePath)
 		if err != nil {
-			return "", err
+			return err
 		}
-
-		return string(stats), nil
+		fmt.Println(string(stats))
+		return nil
 	},
 }
 
@@ -115,12 +115,14 @@ var resizeCommand = cli.Command{
 
 // Stats retrieves the filesystem stats of the direct volume inside the guest.
 func Stats(volumePath string) ([]byte, error) {
+	volumePath = volume.ConvertVolumePath(volumePath)
 	sandboxId, err := volume.GetSandboxIdForVolume(volumePath)
 	if err != nil {
 		return nil, err
 	}
 	urlSafeDevicePath := url.PathEscape(volumePath)
-	body, err := shimclient.DoGet(sandboxId, defaultTimeout, containerdshim.DirectVolumeStatUrl+"/"+urlSafeDevicePath)
+	statsUrl := containerdshim.DirectVolumeStatUrl + "?VolumePath=" + urlSafeDevicePath
+	body, err := shimclient.DoGet(sandboxId, defaultTimeout, statsUrl)
 	if err != nil {
 		return nil, err
 	}
@@ -129,6 +131,7 @@ func Stats(volumePath string) ([]byte, error) {
 
 // Resize resizes a direct volume inside the guest.
 func Resize(volumePath string, size uint64) error {
+	volumePath = volume.ConvertVolumePath(volumePath)
 	sandboxId, err := volume.GetSandboxIdForVolume(volumePath)
 	if err != nil {
 		return err

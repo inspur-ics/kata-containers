@@ -188,6 +188,9 @@ const (
 const bridgePCIStartAddr = 2
 
 const (
+	// QemuPC is the QEMU PC machine type for amd64
+	QemuPC = "pc"
+
 	// QemuQ35 is the QEMU Q35 machine type for amd64
 	QemuQ35 = "q35"
 
