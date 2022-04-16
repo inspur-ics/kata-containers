@@ -41,6 +41,7 @@ use rustjail::specconv::CreateOpts;
 use nix::errno::Errno;
 use nix::mount::MsFlags;
 use nix::sys::stat;
+use nix::sys::statvfs::statvfs;
 use nix::unistd::{self, Pid};
 use rustjail::cgroups::Manager;
 use rustjail::process::ProcessOperations;
@@ -71,7 +72,6 @@ use tracing::instrument;
 
 use libc::{self, c_char, c_ushort, pid_t, winsize, TIOCSWINSZ};
 use std::fs;
-use std::os::unix::fs::MetadataExt;
 use std::os::unix::prelude::PermissionsExt;
 use std::process::{Command, Stdio};
 use std::time::Duration;
@@ -1450,16 +1450,21 @@ fn get_memory_info(block_size: bool, hotplug: bool) -> Result<(u64, bool)> {
 }
 
 fn get_volume_capacity_stats(path: &str) -> Result<VolumeUsage> {
+    info!(sl!(), "volume path: {}", path);
     let mut usage = VolumeUsage::new();
-
-    let s = System::new();
+    let mut s = System::new();
+    s.refresh_disks_list();
+    s.refresh_disks();
     for disk in s.disks() {
-        if let Some(v) = disk.name().to_str() {
+        info!(sl!(), "disk: {:?}", disk);
+        if let Some(v) = disk.mount_point().to_str() {
+            info!(sl!(), "disk.mount_point: {}", v.to_string());
             if v.to_string().eq(path) {
                 usage.available = disk.available_space();
                 usage.total = disk.total_space();
                 usage.used = usage.total - usage.available;
                 usage.unit = VolumeUsage_Unit::BYTES; // bytes
+                info!(sl!(), "volume capacity usage: {:?}", usage);
                 break;
             }
         } else {
@@ -1472,15 +1477,19 @@ fn get_volume_capacity_stats(path: &str) -> Result<VolumeUsage> {
 
 fn get_volume_inode_stats(path: &str) -> Result<VolumeUsage> {
     let mut usage = VolumeUsage::new();
-
-    let s = System::new();
+    let mut s = System::new();
+    s.refresh_disks_list();
+    s.refresh_disks();
     for disk in s.disks() {
-        if let Some(v) = disk.name().to_str() {
+        if let Some(v) = disk.mount_point().to_str() {
             if v.to_string().eq(path) {
-                let meta = fs::metadata(disk.mount_point())?;
-                let inode = meta.ino();
-                usage.used = inode;
+                let stat = statvfs(path.as_bytes()).unwrap();
+                info!(sl!(), "volume {} inodes usage: {:?}", path, usage);
+                usage.available = stat.files_free();
+                usage.total =  stat.files();
+                usage.used = usage.total - usage.available;
                 usage.unit = VolumeUsage_Unit::INODES;
+                info!(sl!(), "volume inode usage: {:?}", usage);
                 break;
             }
         } else {
