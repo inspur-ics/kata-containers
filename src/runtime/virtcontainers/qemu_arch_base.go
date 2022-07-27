@@ -174,7 +174,7 @@ type qemuArchBase struct {
 const (
 	defaultCores       uint32 = 1
 	defaultThreads     uint32 = 1
-	defaultCPUModel           = "host"
+	defaultCPUModel           = "qemu64"
 	defaultBridgeBus          = "pcie.0"
 	defaultPCBridgeBus        = "pci.0"
 	maxDevIDSize              = 31
