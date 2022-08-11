@@ -174,7 +174,7 @@ type qemuArchBase struct {
 const (
 	defaultCores       uint32 = 1
 	defaultThreads     uint32 = 1
-	defaultCPUModel           = "host"
+	defaultCPUModel           = "qemu64"
 	defaultBridgeBus          = "pcie.0"
 	defaultPCBridgeBus        = "pci.0"
 	maxDevIDSize              = 31
@@ -188,6 +188,9 @@ const (
 const bridgePCIStartAddr = 2
 
 const (
+	// QemuPC is the QEMU PC machine type for amd64
+	QemuPC = "pc"
+
 	// QemuQ35 is the QEMU Q35 machine type for amd64
 	QemuQ35 = "q35"
 

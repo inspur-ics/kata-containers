@@ -11,6 +11,11 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	specs "github.com/opencontainers/runtime-spec/specs-go"
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+	"github.com/vishvananda/netlink"
+	"golang.org/x/sys/unix"
 	"io"
 	"math"
 	"net"
@@ -19,11 +24,6 @@ import (
 	"path/filepath"
 	"sync"
 	"syscall"
-
-	specs "github.com/opencontainers/runtime-spec/specs-go"
-	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
-	"github.com/vishvananda/netlink"
 
 	"github.com/kata-containers/kata-containers/src/runtime/pkg/katautils/katatrace"
 	resCtrl "github.com/kata-containers/kata-containers/src/runtime/pkg/resourcecontrol"
@@ -1773,9 +1773,17 @@ func (s *Sandbox) HotplugAddDevice(ctx context.Context, device api.Device, devTy
 	defer span.End()
 
 	if s.sandboxController != nil {
-		if err := s.sandboxController.AddDevice(device.GetHostPath()); err != nil {
-			s.Logger().WithError(err).WithField("device", device).
-				Warnf("Could not add device to the %s controller", s.sandboxController)
+		var stat unix.Stat_t
+		devPath := device.GetHostPath()
+		if err := unix.Stat(devPath, &stat); err != nil {
+			return fmt.Errorf("stat %v failed: %v", devPath, err)
+		}
+		if stat.Mode&unix.S_IFREG != unix.S_IFREG {
+			s.Logger().Infof("Sandbox HotplugAddDevice: path: %v device: %+v", devPath, device)
+			if err := s.sandboxController.AddDevice(device.GetHostPath()); err != nil {
+				s.Logger().WithError(err).WithField("device", device).
+					Warnf("Could not add device to the %s controller", s.sandboxController)
+			}
 		}
 	}
 
@@ -1825,9 +1833,19 @@ func (s *Sandbox) HotplugAddDevice(ctx context.Context, device api.Device, devTy
 func (s *Sandbox) HotplugRemoveDevice(ctx context.Context, device api.Device, devType config.DeviceType) error {
 	defer func() {
 		if s.sandboxController != nil {
-			if err := s.sandboxController.RemoveDevice(device.GetHostPath()); err != nil {
-				s.Logger().WithError(err).WithField("device", device).
-					Warnf("Could not add device to the %s controller", s.sandboxController)
+			var stat unix.Stat_t
+			devPath := device.GetHostPath()
+			if err := unix.Stat(devPath, &stat); err != nil {
+				s.Logger().Errorf("stat %v failed: %v", devPath, err)
+				return
+			}
+
+			if stat.Mode&unix.S_IFREG != unix.S_IFREG {
+				s.Logger().Infof("Sandbox HotplugRemoveDevice: path: %v device: %+v", devPath, device)
+				if err := s.sandboxController.RemoveDevice(device.GetHostPath()); err != nil {
+					s.Logger().WithError(err).WithField("device", device).
+						Warnf("Could not add device to the %s controller", s.sandboxController)
+				}
 			}
 		}
 	}()
@@ -2285,8 +2303,10 @@ func (s *Sandbox) guestMountPath(volumePath string) (string, error) {
 
 	// verify that we have a mount in this sandbox who's source maps to this
 	for _, c := range s.containers {
-		for _, m := range c.mounts {
+		for i, m := range c.mounts {
 			if volumePath == m.Source {
+				s.Logger().Infof("find c.mounts[%d]:%+v", i, m)
+				s.Logger().Infof("m.Source:%s  m.GuestDeviceMount:%s", m.Source, m.GuestDeviceMount)
 				return m.GuestDeviceMount, nil
 			}
 		}

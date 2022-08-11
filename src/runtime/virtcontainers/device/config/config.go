@@ -333,7 +333,8 @@ func GetHostPath(devInfo DeviceInfo, vhostUserStoreEnabled bool, vhostUserStoreP
 		// supported for these devices.
 
 		if os.IsNotExist(err) {
-			return devInfo.ContainerPath, nil
+			//return devInfo.ContainerPath, nil
+			return devInfo.HostPath, nil
 		}
 
 		return "", err
