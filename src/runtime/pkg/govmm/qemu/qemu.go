@@ -2687,6 +2687,19 @@ func (config *Config) appendQMPSockets() {
 
 		config.qemuParams = append(config.qemuParams, "-qmp")
 		config.qemuParams = append(config.qemuParams, strings.Join(qmpParams, ","))
+		//add another qmp socket for debug
+		sock_path := strings.Split(q.Name, ".")
+		debug_sock_path := sock_path[0] + "-debug." + sock_path[1]
+		qmpParams = append([]string{}, fmt.Sprintf("%s:%s", q.Type, debug_sock_path))
+		if q.Server {
+			qmpParams = append(qmpParams, "server=on")
+			if q.NoWait {
+				qmpParams = append(qmpParams, "wait=off")
+			}
+		}
+
+		config.qemuParams = append(config.qemuParams, "-qmp")
+		config.qemuParams = append(config.qemuParams, strings.Join(qmpParams, ","))
 	}
 }
 
