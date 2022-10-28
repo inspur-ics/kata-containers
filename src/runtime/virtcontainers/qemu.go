@@ -27,12 +27,8 @@ import (
 
 	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/pkg/rootless"
 
+	"github.com/juju/fslock"
 	govmmQemu "github.com/kata-containers/kata-containers/src/runtime/pkg/govmm/qemu"
-	"github.com/opencontainers/selinux/go-selinux/label"
-	"github.com/pkg/errors"
-	"github.com/sirupsen/logrus"
-	"golang.org/x/sys/unix"
-
 	hv "github.com/kata-containers/kata-containers/src/runtime/pkg/hypervisors"
 	"github.com/kata-containers/kata-containers/src/runtime/pkg/katautils/katatrace"
 	pkgUtils "github.com/kata-containers/kata-containers/src/runtime/pkg/utils"
@@ -41,6 +37,10 @@ import (
 	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/types"
 	vcTypes "github.com/kata-containers/kata-containers/src/runtime/virtcontainers/types"
 	"github.com/kata-containers/kata-containers/src/runtime/virtcontainers/utils"
+	"github.com/opencontainers/selinux/go-selinux/label"
+	"github.com/pkg/errors"
+	"github.com/sirupsen/logrus"
+	"golang.org/x/sys/unix"
 )
 
 // qemuTracingTags defines tags for the trace span
@@ -110,6 +110,8 @@ type qemu struct {
 	nvdimmCount int
 
 	stopped bool
+
+	blockDeviceLocks map[string]*fslock.Lock
 }
 
 const (
@@ -292,6 +294,8 @@ func (q *qemu) setup(ctx context.Context, id string, hypervisorConfig *Hyperviso
 		q.Logger().Debug("Disable vhost_net")
 		q.arch.disableVhostNet()
 	}
+
+	q.blockDeviceLocks = make(map[string]*fslock.Lock)
 
 	return nil
 }
@@ -1429,11 +1433,36 @@ func (q *qemu) hotplugBlockDevice(ctx context.Context, drive *config.BlockDrive,
 	if err := q.qmpSetup(); err != nil {
 		return err
 	}
-
 	devID := "virtio-" + drive.ID
 	q.Logger().Infof("qemu hotplugBlockDevice: drive: %+v devID: %v op: %v", *drive, devID, op)
+
+	var drive_stat unix.Stat_t
+	if err := unix.Stat(drive.File, &drive_stat); err != nil {
+		return fmt.Errorf("get block device %s stat failed. err: %v", drive.File, err)
+	}
+
 	if op == AddDevice {
-		return q.hotplugAddBlockDevice(ctx, drive, op, devID)
+		if drive_stat.Mode&unix.S_IFREG == unix.S_IFREG {
+			if _, ok := q.blockDeviceLocks[drive.File]; !ok {
+				q.Logger().Infof("create fslock for vdisk %s", drive.File)
+				q.blockDeviceLocks[drive.File] = fslock.New(drive.File)
+			}
+			if err := q.blockDeviceLocks[drive.File].TryLock(); err != nil {
+				return fmt.Errorf("try lock vdisk %s failed, maybe used by another node. err: %v", drive.File, err)
+			} else {
+				q.Logger().Infof("try lock vdisk %s successfully", drive.File)
+			}
+		}
+
+		if err := q.hotplugAddBlockDevice(ctx, drive, op, devID); err != nil {
+			if drive_stat.Mode&unix.S_IFREG == unix.S_IFREG {
+				q.Logger().Infof("unlock vdisk %s due to add vdisk failed. err: %v", drive.File, err)
+				q.blockDeviceLocks[drive.File].Unlock()
+			}
+			return err
+		} else {
+			return nil
+		}
 	}
 	if !drive.Swap && q.config.BlockDeviceDriver == config.VirtioBlock {
 		if err := q.arch.removeDeviceFromBridge(drive.ID); err != nil {
@@ -1445,7 +1474,17 @@ func (q *qemu) hotplugBlockDevice(ctx context.Context, drive *config.BlockDrive,
 		return err
 	}
 
-	return q.qmpMonitorCh.qmp.ExecuteBlockdevDel(q.qmpMonitorCh.ctx, drive.ID)
+	if err := q.qmpMonitorCh.qmp.ExecuteBlockdevDel(q.qmpMonitorCh.ctx, drive.ID); err != nil {
+		return err
+	}
+
+	if drive_stat.Mode&unix.S_IFREG == unix.S_IFREG {
+		if _, ok := q.blockDeviceLocks[drive.File]; ok {
+			q.Logger().Infof("unlock vdisk %s", drive.File)
+			q.blockDeviceLocks[drive.File].Unlock()
+		}
+	}
+	return nil
 }
 
 func (q *qemu) hotplugVhostUserDevice(ctx context.Context, vAttr *config.VhostUserDeviceAttrs, op Operation) error {
