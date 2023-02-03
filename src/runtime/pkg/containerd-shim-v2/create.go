@@ -67,6 +67,8 @@ func create(ctx context.Context, s *service, r *taskAPI.CreateTaskRequest) (*con
 		return nil, err
 	}
 
+	shimLog.Infof("rootFs: %+v ociSpec.Annotations: %+v", rootFs, ociSpec.Annotations)
+
 	disableOutput := noNeedForOutput(detach, ociSpec.Process.Terminal)
 	rootfs := filepath.Join(r.Bundle, "rootfs")
 
@@ -263,7 +265,7 @@ func checkAndMount(s *service, r *taskAPI.CreateTaskRequest) (bool, error) {
 		m := r.Rootfs[0]
 
 		// Plug the block backed rootfs directly instead of mounting it.
-		if katautils.IsBlockDevice(m.Source) && !s.config.HypervisorConfig.DisableBlockDeviceUse {
+		if (katautils.IsBlockDevice(m.Source) || katautils.IsRegularFile(m.Source)) && !s.config.HypervisorConfig.DisableBlockDeviceUse {
 			return false, nil
 		}
 		if m.Type == vc.NydusRootFSType {

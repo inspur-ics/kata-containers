@@ -12,6 +12,7 @@ import (
 	"io"
 	"math/big"
 	"os"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"unsafe"
@@ -149,6 +150,54 @@ func IsAPVFIOMediatedDevice(sysfsdev string) bool {
 		if el == vfioAPSysfsDir {
 			return true
 		}
+	}
+	return false
+}
+
+// ResolvePath returns the fully resolved and expanded value of the
+// specified path.
+func ResolvePath(path string) (string, error) {
+	if path == "" {
+		return "", fmt.Errorf("path must be specified")
+	}
+
+	absolute, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+
+	resolved, err := filepath.EvalSymlinks(absolute)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// Make the error clearer than the default
+			return "", fmt.Errorf("file %v does not exist", absolute)
+		}
+
+		return "", err
+	}
+
+	return resolved, nil
+}
+
+// IsRegularFile returns true if the give path is a regular file
+func IsRegularFile(filePath string) bool {
+	var stat unix.Stat_t
+
+	if filePath == "" {
+		return false
+	}
+
+	devicePath, err := ResolvePath(filePath)
+	if err != nil {
+		return false
+	}
+
+	if err := unix.Stat(devicePath, &stat); err != nil {
+		return false
+	}
+
+	if stat.Mode&unix.S_IFREG == unix.S_IFREG {
+		return true
 	}
 	return false
 }
