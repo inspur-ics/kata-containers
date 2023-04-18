@@ -10,6 +10,7 @@ use tokio::sync::Mutex;
 
 use std::ffi::CString;
 use std::io;
+use std::io::Write;
 use std::path::Path;
 use std::sync::Arc;
 use ttrpc::{
@@ -145,6 +146,67 @@ fn verify_cid(id: &str) -> Result<()> {
     }
 }
 
+fn start_volume_usage_monitor() -> Result<()> {
+    let script_text = vec![
+        "#!/bin/sh",
+        "block_usage_dir='/tmp/volume_block_usage'",
+        "inode_usage_dir='/tmp/volume_inode_usage'",
+
+        "get_block_usage() {",
+        "   df -t xfs -B1 | grep 'kata-containers' > /tmp/df_block_usage",
+        "   while read usage_item",
+        "   do",
+        "       mount_point=$(echo $usage_item | awk '{print $6}')",
+        "       file_name=$(echo $mount_point | awk -F / '{print $6}')",
+        "       block_usage_file=$block_usage_dir/$file_name",
+        "       echo $usage_item > $block_usage_file",
+        "   done < /tmp/df_block_usage",  
+        "}\n",
+
+        "get_inode_usage() {",
+        "   df -t xfs -i | grep 'kata-containers' > /tmp/df_inode_usage",
+        "   while read usage_item",
+        "   do",
+        "       mount_point=$(echo $usage_item | awk '{print $6}')",
+        "       file_name=$(echo $mount_point | awk -F / '{print $6}')",
+        "       inode_usage_file=$inode_usage_dir/$file_name",
+        "       echo $usage_item > $inode_usage_file",
+        "   done < /tmp/df_inode_usage",
+        "}\n",
+
+        "main() {",
+        "   [ -d $block_usage_dir ] || mkdir -p $block_usage_dir",
+        "   [ -d $inode_usage_dir ] || mkdir -p $inode_usage_dir",
+        "   get_inode_usage",
+        "   while true",
+        "   do",
+        "       get_block_usage",
+        "       sleep 60",
+        "   done",
+        "}\n",
+
+        "main $@",
+    ];
+
+    let script_path = "/tmp/volume_usage_monitor.sh";
+    let mut script_file = File::create(script_path).expect("create script file failed");
+    for item in &script_text {
+        let line_text = format!("{}\n", item);
+        script_file.write_all(line_text.as_bytes()).expect("write to script file failed");
+    }
+    script_file.sync_all().expect("sync script file failed");
+
+    info!(sl!(), "start script {}", script_path);
+    Command::new("sh")
+        .arg(script_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .expect("start script failed");
+
+    Ok(())
+}
+
 impl AgentService {
     #[instrument]
     async fn do_create_container(
@@ -200,6 +262,10 @@ impl AgentService {
             sandbox = self.sandbox.clone();
             s = sandbox.lock().await;
             s.container_mounts.insert(cid.clone(), m);
+        }
+    
+        if oci.annotations["io.kubernetes.cri.container-type"] == "container" {
+            start_volume_usage_monitor()?;
         }
 
         update_container_namespaces(&s, &mut oci, use_sandbox_pidns)?;
@@ -1464,12 +1530,31 @@ fn get_memory_info(
 
 fn get_volume_capacity_stats(path: &str) -> Result<VolumeUsage> {
     let mut usage = VolumeUsage::new();
+    let path_item :Vec<&str> = path.split("/").collect();
+    let file_name = path_item[path_item.len()-1];
+    let block_usage_file = format!("/tmp/volume_block_usage/{}", file_name);
+    let usage_path = Path::new(&block_usage_file);
+    if !usage_path.exists() {
+        let stat = statfs::statfs(path)?;
+        let block_size = stat.block_size() as u64;
+        usage.total = stat.blocks() * block_size;
+        usage.available = stat.blocks_free() * block_size;
+        usage.used = usage.total - usage.available;
+        usage.unit = VolumeUsage_Unit::BYTES;
+        return Ok(usage);
+    }
 
-    let stat = statfs::statfs(path)?;
-    let block_size = stat.block_size() as u64;
-    usage.total = stat.blocks() * block_size;
-    usage.available = stat.blocks_free() * block_size;
-    usage.used = usage.total - usage.available;
+    let output = Command::new("cat")
+        .arg(block_usage_file)
+        .stdout(Stdio::piped())
+        .output()
+        .expect("cat block usage failed");   
+    let std_out = String::from_utf8_lossy(&output.stdout);
+    let stdout_lines :Vec<&str> = std_out.split("\n").collect();
+    let block_usage :Vec<&str> = stdout_lines[0].split_whitespace().collect();
+    usage.total = block_usage[1].parse::<u64>().unwrap();
+    usage.used = block_usage[2].parse::<u64>().unwrap();
+    usage.available = usage.total - usage.used;
     usage.unit = VolumeUsage_Unit::BYTES;
 
     Ok(usage)
@@ -1477,11 +1562,30 @@ fn get_volume_capacity_stats(path: &str) -> Result<VolumeUsage> {
 
 fn get_volume_inode_stats(path: &str) -> Result<VolumeUsage> {
     let mut usage = VolumeUsage::new();
+    let path_item :Vec<&str> = path.split("/").collect();
+    let file_name = path_item[path_item.len()-1];
+    let inode_usage_file = format!("/tmp/volume_inode_usage/{}", file_name);
+    let usage_path = Path::new(&inode_usage_file);
+    if !usage_path.exists() {
+        let stat = statfs::statfs(path)?;
+        usage.total = stat.files();
+        usage.available = stat.files_free();
+        usage.used = usage.total - usage.available;
+        usage.unit = VolumeUsage_Unit::INODES;
+        return Ok(usage);   
+    }
 
-    let stat = statfs::statfs(path)?;
-    usage.total = stat.files();
-    usage.available = stat.files_free();
-    usage.used = usage.total - usage.available;
+    let output = Command::new("cat")
+        .arg(inode_usage_file)
+        .stdout(Stdio::piped())
+        .output()
+        .expect("cat inode usage failed");  
+    let std_out = String::from_utf8_lossy(&output.stdout);
+    let stdout_lines :Vec<&str> = std_out.split("\n").collect();
+    let inode_usage :Vec<&str> = stdout_lines[0].split_whitespace().collect();
+    usage.total = inode_usage[1].parse::<u64>().unwrap();
+    usage.used = inode_usage[2].parse::<u64>().unwrap();
+    usage.available = usage.total - usage.used;
     usage.unit = VolumeUsage_Unit::INODES;
 
     Ok(usage)
