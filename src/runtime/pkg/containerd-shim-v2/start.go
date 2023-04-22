@@ -38,12 +38,6 @@ func startContainer(ctx context.Context, s *service, c *container) (retErr error
 		if err != nil {
 			return err
 		}
-		// Start monitor after starting sandbox
-		s.monitor, err = s.sandbox.Monitor(ctx)
-		if err != nil {
-			return err
-		}
-		go watchSandbox(ctx, s)
 
 		// We use s.ctx(`ctx` derived from `s.ctx`) to check for cancellation of the
 		// shim context and the context passed to startContainer for tracing.
@@ -53,6 +47,13 @@ func startContainer(ctx context.Context, s *service, c *container) (retErr error
 		if err != nil {
 			return err
 		}
+		// Start monitor after starting sandbox
+		shimLog.Info("start sandbox monitor")
+		s.monitor, err = s.sandbox.Monitor(ctx)
+		if err != nil {
+			return err
+		}
+		go watchSandbox(ctx, s)
 	}
 
 	// Run post-start OCI hooks.

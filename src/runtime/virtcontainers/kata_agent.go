@@ -75,6 +75,7 @@ const (
 
 var (
 	checkRequestTimeout          = 30 * time.Second
+	createRequestTimeout         = 90 * time.Second
 	defaultRequestTimeout        = 60 * time.Second
 	errorMissingOCISpec          = errors.New("Missing OCI specification")
 	defaultKataHostSharedDir     = "/run/kata-containers/shared/sandboxes/"
@@ -1992,6 +1993,8 @@ func (k *kataAgent) getReqContext(ctx context.Context, reqName string) (newCtx c
 		// Wait and GetOOMEvent have no timeout
 	case grpcCheckRequest:
 		newCtx, cancel = context.WithTimeout(ctx, checkRequestTimeout)
+	case grpcCreateContainerRequest:
+		newCtx, cancel = context.WithTimeout(ctx, createRequestTimeout)
 	default:
 		newCtx, cancel = context.WithTimeout(ctx, defaultRequestTimeout)
 	}
