@@ -1484,7 +1484,7 @@ func (q *qemu) hotplugBlockDevice(ctx context.Context, drive *config.BlockDrive,
 	}
 
 	devID := "virtio-" + drive.ID
-
+	q.Logger().Infof("qemu hotplugBlockDevice: drive: %+v devID: %v op: %v", *drive, devID, op)
 	if op == AddDevice {
 		return q.hotplugAddBlockDevice(ctx, drive, op, devID)
 	}
@@ -2323,6 +2323,8 @@ func genericBridges(number uint32, machineType string) []types.Bridge {
 	var bt types.Type
 
 	switch machineType {
+	case QemuPC:
+		bt = types.PCI
 	case QemuQ35:
 		// currently only pci bridges are supported
 		// qemu-2.10 will introduce pcie bridges

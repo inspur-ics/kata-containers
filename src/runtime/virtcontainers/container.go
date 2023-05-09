@@ -445,6 +445,7 @@ func (c *Container) mountSharedDirMounts(ctx context.Context, sharedDirMounts, i
 		// Check if mount is a block device file. If it is, the block device will be attached to the host
 		// instead of passing this as a shared mount:
 		if len(m.BlockDeviceID) > 0 {
+			c.Logger().Infof("Container mountSharedDirMounts: %+v", m)
 			// Attach this block device, all other devices passed in the config have been attached at this point
 			if err = c.sandbox.devManager.AttachDevice(ctx, m.BlockDeviceID, c.sandbox); err != nil {
 				return storages, err
@@ -598,8 +599,10 @@ func (c *Container) createBlockDevices(ctx context.Context) error {
 		return nil
 	}
 
+	vdiskIndex := 0
 	// iterate all mounts and create block device if it's block based.
 	for i := range c.mounts {
+		c.Logger().Infof("Container c.mounts[%v]: %+v", i, c.mounts[i])
 		if len(c.mounts[i].BlockDeviceID) > 0 {
 			// Non-empty m.BlockDeviceID indicates there's already one device
 			// associated with the mount,so no need to create a new device for it
@@ -613,7 +616,8 @@ func (c *Container) createBlockDevices(ctx context.Context) error {
 		}
 
 		// Handle directly assigned volume. Update the mount info based on the mount info json.
-		mntInfo, e := volume.VolumeMountInfo(c.mounts[i].Source)
+		volumePath := volume.ConvertVolumePath(c.mounts[i].Source)
+		mntInfo, e := volume.VolumeMountInfo(volumePath)
 		if e != nil && !os.IsNotExist(e) {
 			c.Logger().WithError(e).WithField("mount-source", c.mounts[i].Source).
 				Error("failed to parse the mount info file for a direct assigned volume")
@@ -621,8 +625,9 @@ func (c *Container) createBlockDevices(ctx context.Context) error {
 		}
 
 		if mntInfo != nil {
+			c.Logger().Infof("c.mounts[%d].Source: %s volumePath: %s MountInfo: %+v", i, c.mounts[i].Source, volumePath, mntInfo)
 			// Write out sandbox info file on the mount source to allow CSI to communicate with the runtime
-			if err := volume.RecordSandboxId(c.sandboxID, c.mounts[i].Source); err != nil {
+			if err := volume.RecordSandboxId(c.sandboxID, volumePath); err != nil {
 				c.Logger().WithError(err).Error("error writing sandbox info")
 			}
 
@@ -638,6 +643,7 @@ func (c *Container) createBlockDevices(ctx context.Context) error {
 			c.mounts[i].Type = mntInfo.FsType
 			c.mounts[i].Options = mntInfo.Options
 			c.mounts[i].ReadOnly = readonly
+			c.Logger().Infof("Container update c.mounts[%v]: %+v", i, c.mounts[i])
 
 			for key, value := range mntInfo.Metadata {
 				switch key {
@@ -679,6 +685,18 @@ func (c *Container) createBlockDevices(ctx context.Context) error {
 				Minor:         int64(unix.Minor(uint64(stat.Rdev))),
 				ReadOnly:      c.mounts[i].ReadOnly,
 			}
+			c.Logger().Infof("DeviceInfo: %+v", *di)
+		} else if mntInfo != nil && mntInfo.VolumeType == "block" {
+			di = &config.DeviceInfo{
+				HostPath:      c.mounts[i].Source,
+				ContainerPath: c.mounts[i].Destination,
+				DevType:       "b",
+				Major:         0,
+				Minor:         int64(vdiskIndex),
+				ReadOnly:      c.mounts[i].ReadOnly,
+			}
+			c.Logger().Infof("vdiskIndex: %d DeviceInfo: %+v", vdiskIndex, *di)
+			vdiskIndex += 1
 			// Check whether source can be used as a pmem device
 		} else if di, err = config.PmemDeviceInfo(c.mounts[i].Source, c.mounts[i].Destination); err != nil {
 			c.Logger().WithError(err).
@@ -1291,7 +1309,7 @@ func (c *Container) plugDevice(ctx context.Context, devicePath string) error {
 		}
 
 		c.state.BlockDeviceID = b.DeviceID()
-
+		c.Logger().Infof("plugDevice: devicePath: %v device: %+v", devicePath, b)
 		// attach rootfs device
 		if err := c.sandbox.devManager.AttachDevice(ctx, b.DeviceID(), c.sandbox); err != nil {
 			return err
@@ -1340,6 +1358,7 @@ func (c *Container) attachDevices(ctx context.Context) error {
 	// the devices need to be split into two lists, normalAttachedDevs and delayAttachedDevs.
 	// so c.device is not used here. See issue https://github.com/kata-containers/runtime/issues/2460.
 	for _, dev := range c.devices {
+		c.Logger().Infof("Container attachDevices: %+v", dev)
 		if err := c.sandbox.devManager.AttachDevice(ctx, dev.ID, c.sandbox); err != nil {
 			return err
 		}

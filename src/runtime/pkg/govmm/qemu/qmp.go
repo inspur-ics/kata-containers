@@ -8,18 +8,18 @@ package qemu
 import (
 	"bufio"
 	"container/list"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"io"
 	"net"
 	"os"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
-
-	"context"
-	"strings"
 )
 
 // QMPLog is a logging interface used by the qemu package to log various
@@ -794,8 +794,19 @@ func (q *QMP) blockdevAddBaseArgs(driver, device, blockdevID string, ro bool) (m
 // used to name the device.  As this identifier will be passed directly to QMP,
 // it must obey QMP's naming rules, e,g., it must start with a letter.
 func (q *QMP) ExecuteBlockdevAdd(ctx context.Context, device, blockdevID string, ro bool) error {
-	args, _ := q.blockdevAddBaseArgs("host_device", device, blockdevID, ro)
+	var driver string
+	var stat unix.Stat_t
+	if err := unix.Stat(device, &stat); err != nil {
+		return fmt.Errorf("stat %q failed: %v", device, err)
+	}
+	if stat.Mode&unix.S_IFREG == unix.S_IFREG {
+		driver = "file"
+	} else {
+		driver = "host_device"
+	}
 
+	args, _ := q.blockdevAddBaseArgs(driver, device, blockdevID, ro)
+	q.cfg.Logger.Infof("QMP ExecuteBlockdevAdd: blockdev-add device: %+v args: %+v", device, args)
 	return q.executeCommand(ctx, "blockdev-add", args, nil)
 }
 
@@ -807,13 +818,24 @@ func (q *QMP) ExecuteBlockdevAdd(ctx context.Context, device, blockdevID string,
 // is enabled.  noFlush denotes whether flush requests for the device are
 // ignored.
 func (q *QMP) ExecuteBlockdevAddWithCache(ctx context.Context, device, blockdevID string, direct, noFlush, ro bool) error {
-	args, blockdevArgs := q.blockdevAddBaseArgs("host_device", device, blockdevID, ro)
+	var driver string
+	var stat unix.Stat_t
+	if err := unix.Stat(device, &stat); err != nil {
+		return fmt.Errorf("stat %q failed: %v", device, err)
+	}
+	if stat.Mode&unix.S_IFREG == unix.S_IFREG {
+		driver = "file"
+	} else {
+		driver = "host_device"
+	}
+
+	args, blockdevArgs := q.blockdevAddBaseArgs(driver, device, blockdevID, ro)
 
 	blockdevArgs["cache"] = map[string]interface{}{
 		"direct":   direct,
 		"no-flush": noFlush,
 	}
-
+	q.cfg.Logger.Infof("QMP ExecuteBlockdevAddWithCache: blockdev-add device: %+v args: %+v", device, args)
 	return q.executeCommand(ctx, "blockdev-add", args, nil)
 }
 
