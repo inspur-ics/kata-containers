@@ -78,6 +78,29 @@ func IsBlockDevice(filePath string) bool {
 	return false
 }
 
+// IsRegularFile returns true if the give path is a regular file
+func IsRegularFile(filePath string) bool {
+	var stat unix.Stat_t
+
+	if filePath == "" {
+		return false
+	}
+
+	devicePath, err := ResolvePath(filePath)
+	if err != nil {
+		return false
+	}
+
+	if err := unix.Stat(devicePath, &stat); err != nil {
+		return false
+	}
+
+	if stat.Mode&unix.S_IFREG == unix.S_IFREG {
+		return true
+	}
+	return false
+}
+
 // fileSize returns the number of bytes in the specified file
 func fileSize(file string) (int64, error) {
 	st := syscall.Stat_t{}

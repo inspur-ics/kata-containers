@@ -1255,7 +1255,7 @@ func (c *Container) hotplugDrive(ctx context.Context) error {
 		return err
 	}
 
-	if !isDM {
+	if !isDM && !utils.IsRegularFile(c.rootFs.Source) {
 		return nil
 	}
 
@@ -1296,20 +1296,30 @@ func (c *Container) plugDevice(ctx context.Context, devicePath string) error {
 		return fmt.Errorf("stat %q failed: %v", devicePath, err)
 	}
 
-	if c.checkBlockDeviceSupport(ctx) && stat.Mode&unix.S_IFBLK == unix.S_IFBLK {
+	if c.checkBlockDeviceSupport(ctx) && (stat.Mode&unix.S_IFBLK == unix.S_IFBLK || stat.Mode&unix.S_IFREG == unix.S_IFREG) {
+		var major, minor int64
+		if stat.Mode&unix.S_IFBLK == unix.S_IFBLK {
+			major = int64(unix.Major(uint64(stat.Rdev)))
+			minor = int64(unix.Minor(uint64(stat.Rdev)))
+		} else {
+			// for vdisk file, use inode number to generate major and minor
+			major = int64(unix.Major(uint64(stat.Ino)))
+			minor = int64(unix.Minor(uint64(stat.Ino)))
+		}
+
 		b, err := c.sandbox.devManager.NewDevice(config.DeviceInfo{
 			HostPath:      devicePath,
 			ContainerPath: filepath.Join(kataGuestSharedDir(), c.id),
 			DevType:       "b",
-			Major:         int64(unix.Major(uint64(stat.Rdev))),
-			Minor:         int64(unix.Minor(uint64(stat.Rdev))),
+			Major:         major,
+			Minor:         minor,
 		})
 		if err != nil {
 			return fmt.Errorf("device manager failed to create rootfs device for %q: %v", devicePath, err)
 		}
 
 		c.state.BlockDeviceID = b.DeviceID()
-		c.Logger().Infof("plugDevice: devicePath: %v device: %+v", devicePath, b)
+		c.Logger().Infof("plugDevice: devicePath: %v device: %+v major: %v minor: %v", devicePath, b, major, minor)
 		// attach rootfs device
 		if err := c.sandbox.devManager.AttachDevice(ctx, b.DeviceID(), c.sandbox); err != nil {
 			return err
